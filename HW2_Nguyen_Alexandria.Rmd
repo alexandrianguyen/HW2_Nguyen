@@ -1,0 +1,183 @@
+---
+title: "STA 380 Homework 2"
+author: "Alexandria Nguyen"
+date: "August 19, 2015"
+output: word_document
+---
+
+## Flights at ABIA
+### Required Files:
+* ABIA.csv
+
+#### Q: What is the best day of the week to fly to minimize delays?
+
+```{r, echo=FALSE, warning=FALSE}
+ABIA = read.csv("data/ABIA.csv")
+library(ggplot2)
+ggplot(ABIA, aes(DayOfWeek, SecurityDelay)) +
+  geom_bar(stat = "identity") + 
+  labs(title = "ABIA Security Delays in 2008 by Days of Week", 
+       x = "Days of Week, 1 (Monday) - 7 (Sunday)", y = "Security Delay in Minutes")
+```
+
+#### A: Tuesday
+
+
+## Author Attribution
+### Required Files:
+* c50train folder (50 .txt files)
+* c50test folder (50 .txt files)
+
+### Model 1: Naive Bayes
+```{r, echo=FALSE, warning=FALSE, results='hide'}
+library(tm)
+readerPlain = function(fname){
+  readPlain(elem=list(content=readLines(fname)), 
+            id=fname, language='en') }
+
+author_dirs = Sys.glob('data/ReutersC50/C50train/*')
+file_list = NULL
+labels = NULL
+
+for(author in author_dirs) {
+  author_name = substring(author, first=26)
+  files_to_add = Sys.glob(paste0(author, '/*.txt'))
+  file_list = append(file_list, files_to_add)
+  labels = append(labels, rep(author_name, length(files_to_add)))
+}
+
+all_docs = lapply(file_list, readerPlain) 
+names(all_docs) = file_list
+names(all_docs) = sub('.txt', '', names(all_docs))
+
+my_corpus = Corpus(VectorSource(all_docs))
+names(my_corpus) = file_list
+
+my_corpus = tm_map(my_corpus, content_transformer(tolower)) 
+my_corpus = tm_map(my_corpus, content_transformer(removeNumbers))
+my_corpus = tm_map(my_corpus, content_transformer(removePunctuation)) 
+my_corpus = tm_map(my_corpus, content_transformer(stripWhitespace)) 
+my_corpus = tm_map(my_corpus, content_transformer(removeWords), stopwords("SMART"))
+
+DTM = DocumentTermMatrix(my_corpus)
+DTM 
+inspect(DTM)
+class(DTM) 
+
+DTM = removeSparseTerms(DTM, 0.975)
+DTM
+
+author_dirs2 = Sys.glob('data/ReutersC50/C50test/*')
+file_list2 = NULL
+labels2 = NULL
+for(author2 in author_dirs2) {
+  author_name2 = substring(author2, first=26)
+  files_to_add2 = Sys.glob(paste0(author2, '/*.txt'))
+  file_list2 = append(file_list2, files_to_add2)
+  labels2 = append(labels2, rep(author_name2, length(files_to_add2)))
+}
+
+all_docs2 = lapply(file_list2, readerPlain) 
+names(all_docs2) = file_list
+names(all_docs2) = sub('.txt', '', names(all_docs2))
+
+my_corpus2 = Corpus(VectorSource(all_docs2))
+names(my_corpus2) = file_list2
+
+my_corpus2 = tm_map(my_corpus2, content_transformer(tolower)) 
+my_corpus2 = tm_map(my_corpus2, content_transformer(removeNumbers))
+my_corpus2 = tm_map(my_corpus2, content_transformer(removePunctuation)) 
+my_corpus2 = tm_map(my_corpus2, content_transformer(stripWhitespace))
+my_corpus2 = tm_map(my_corpus2, content_transformer(removeWords), stopwords("SMART"))
+
+training_dict = NULL
+training_dict = dimnames(DTM)[[2]]
+DTM2 = DocumentTermMatrix(my_corpus2, list(dictionary = training_dict))
+DTM2 
+inspect(DTM2)
+class(DTM2) 
+
+X = as.matrix(DTM)
+X2 = as.matrix(DTM2)
+
+smooth_count = 1/nrow(X)
+prob.train = rowsum(X + smooth_count,labels)
+prob.train = prob.train/rowSums(prob.train)
+prob.train = log(prob.train)
+prob = X2 %*% t(prob.train)
+prediction<- colnames(prob)[apply(prob,1,which.max)]
+head(prob)
+actual = labels
+compare =cbind.data.frame(actual,prediction)
+compare2 = compare
+compare2$same = 0.0
+mask = (compare2$actual == compare2$prediction)
+ind = which(mask %in% TRUE)
+compare2$same[c(ind)] = 1.0
+percent.accuracy = sum(compare2$same)/length(compare2$same)
+percent.accuracy
+
+```
+#####The Naive Bayes model correctly matched the authors to their works `r percent.accuracy` (or 60%) of the time.
+
+
+### Model 2: Random Forest
+```{r, echo=FALSE, warning=FALSE, error=FALSE, results='hide'}
+library(randomForest)
+library(plyr)
+set.seed(66)
+col_x <- data.frame(X2[,intersect(colnames(X2), colnames(X))])
+col_y <- read.table(textConnection(""), col.names = colnames(X), colClasses = "integer")
+
+DTM3 = rbind.fill(col_x, col_y)
+
+DTM3.df = as.data.frame(DTM3)
+
+rffit = randomForest(x=DTM3.df, y=as.factor(labels),ntree=200,maxnodes=15)
+
+par(mfrow=c(1,1))
+```
+
+#### Random Forest Visualization
+```{r, echo=FALSE, warning=FALSE}
+plot(rffit)
+```
+
+```{r, echo=FALSE, warning=FALSE}
+rf.pred <- predict(rffit, data=labels2)
+summary(rf.pred)
+rf.table = table(rf.pred, labels2)
+```
+
+#####The random forest model correctly matched the authors to their works `r (sum(rf.table[row(rf.table)==col(rf.table)])/sum(rf.table))` (or 96%) of the time.
+
+
+#### Interpretation:
+* The random forest model performs surprisingly well at 96% accuracy, but this could be attributable to chasing noise. 
+* Based solely on the percentage accuracy for predictions, I would use the random forest model.
+
+
+## Association Rule Mining
+### Required Files:
+* groceries.txt
+
+#### A priori algorithm:
+```{r, echo=FALSE, warning=FALSE}
+library(arules)
+groceries <- read.transactions("data/groceries.txt", format = "basket", sep = ",")
+
+groceriesrules <- apriori(groceries, 
+                      parameter=list(support=.005, confidence=.6))
+```
+
+
+```{r, echo=TRUE}
+inspect(groceriesrules)
+
+inspect(subset(groceriesrules, subset=lift > 3))
+inspect(subset(groceriesrules, subset=confidence > 0.65))
+inspect(subset(groceriesrules, subset=support > .005 & confidence > 0.65))
+```
+
+#### Interpretation:
+I set the confidence to 0.6 (which means that whole milk or other vegetables occur when the previous sets occur 6 out of 10 times) to try to bring out significant correlations that occur frequently. Any time you buy items on the left, there's a 60% chance the item on the right will be purchased. I set the lift as high as possible without getting a null value to make the relationship between the right hand side as relevant as possible in comparison to the probability of buying items in the left basket.
